@@ -78,20 +78,26 @@ async function processReadyExecutions() {
 async function startWorker() {
   console.log("[Worker] FlowSend worker started. Polling every", POLL_INTERVAL_MS / 1000, "seconds...");
 
-  // Process immediately on start
-  await processReadyExecutions();
-
-  // Then poll at regular intervals
-  setInterval(async () => {
+  // Poll at regular intervals (don't crash on error)
+  const poll = async () => {
     try {
       await processReadyExecutions();
     } catch (error) {
-      console.error("[Worker] Poll error:", error);
+      console.error("[Worker] Poll error (will retry):", error);
     }
-  }, POLL_INTERVAL_MS);
+  };
+
+  // Initial poll with delay to allow DB to be ready
+  setTimeout(poll, 5000);
+
+  setInterval(poll, POLL_INTERVAL_MS);
 }
 
-startWorker().catch(console.error);
+startWorker().catch((err) => {
+  console.error("[Worker] Fatal startup error:", err);
+  // Don't crash — keep container alive so Coolify doesn't loop-restart
+  setInterval(() => {}, 60_000);
+});
 
 // Handle graceful shutdown
 process.on("SIGINT", async () => {
