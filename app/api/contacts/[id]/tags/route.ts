@@ -1,0 +1,79 @@
+import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth";
+import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
+import { startWorkflowForContact } from "@/lib/workflow-engine";
+
+export async function POST(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { tagId } = await req.json();
+
+  // Verify contact belongs to client
+  const contact = await prisma.contact.findFirst({
+    where: { id: params.id, clientId: session.user.id },
+  });
+  if (!contact) return NextResponse.json({ error: "Contact not found" }, { status: 404 });
+
+  // Verify tag belongs to client
+  const tag = await prisma.tag.findFirst({
+    where: { id: tagId, clientId: session.user.id },
+  });
+  if (!tag) return NextResponse.json({ error: "Tag not found" }, { status: 404 });
+
+  // Apply tag (upsert to avoid duplicates)
+  try {
+    await prisma.contactTag.create({
+      data: {
+        contactId: params.id,
+        tagId,
+        appliedBy: session.user.email || "system",
+      },
+    });
+  } catch (error: any) {
+    if (error.code !== "P2002") throw error;
+    return NextResponse.json({ error: "Tag already applied" }, { status: 409 });
+  }
+
+  // Trigger workflows that use this tag
+  const workflows = await prisma.workflow.findMany({
+    where: {
+      clientId: session.user.id,
+      triggerTagId: tagId,
+      isActive: true,
+    },
+  });
+
+  // Start workflows asynchronously (don't await)
+  for (const workflow of workflows) {
+    startWorkflowForContact(workflow.id, params.id, session.user.id).catch(
+      console.error
+    );
+  }
+
+  return NextResponse.json({ success: true, workflowsTriggered: workflows.length });
+}
+
+export async function DELETE(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const session = await getServerSession(authOptions);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const { tagId } = await req.json();
+
+  await prisma.contactTag.deleteMany({
+    where: {
+      contactId: params.id,
+      tagId,
+      contact: { clientId: session.user.id },
+    },
+  });
+
+  return NextResponse.json({ success: true });
+}

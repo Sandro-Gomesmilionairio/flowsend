@@ -1,0 +1,150 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  CLIENT
+}
+
+enum ExecutionStatus {
+  RUNNING
+  WAITING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+model Client {
+  id                   String   @id @default(cuid())
+  name                 String
+  email                String   @unique
+  passwordHash         String
+  role                 Role     @default(CLIENT)
+  chatwootAccountId    String?
+  chatwootApiToken     String?
+  chatwootInboxId      String?
+  maxMessagesPerMinute Int      @default(2)
+  sendWindowStart      String   @default("09:00")
+  sendWindowEnd        String   @default("18:00")
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  contacts   Contact[]
+  tags       Tag[]
+  workflows  Workflow[]
+  executions WorkflowExecution[]
+
+  @@map("clients")
+}
+
+model Contact {
+  id                     String   @id @default(cuid())
+  clientId               String
+  name                   String
+  phone                  String
+  email                  String?
+  chatwootContactId      String?
+  chatwootConversationId String?
+  customFields           Json     @default("{}")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+
+  client     Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  tags       ContactTag[]
+  executions WorkflowExecution[]
+
+  @@unique([clientId, phone])
+  @@map("contacts")
+}
+
+model Tag {
+  id        String   @id @default(cuid())
+  clientId  String
+  name      String
+  color     String   @default("#6366F1")
+  createdAt DateTime @default(now())
+
+  client    Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  contacts  ContactTag[]
+  workflows Workflow[]   @relation("WorkflowTriggerTag")
+
+  @@unique([clientId, name])
+  @@map("tags")
+}
+
+model ContactTag {
+  id        String   @id @default(cuid())
+  contactId String
+  tagId     String
+  appliedAt DateTime @default(now())
+  appliedBy String?
+
+  contact Contact @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([contactId, tagId])
+  @@map("contact_tags")
+}
+
+model Workflow {
+  id           String   @id @default(cuid())
+  clientId     String
+  name         String
+  triggerTagId String?
+  isActive     Boolean  @default(true)
+  nodes        Json     @default("[]")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  client     Client              @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  triggerTag Tag?                @relation("WorkflowTriggerTag", fields: [triggerTagId], references: [id])
+  executions WorkflowExecution[]
+
+  @@map("workflows")
+}
+
+model WorkflowExecution {
+  id            String          @id @default(cuid())
+  workflowId    String
+  contactId     String
+  clientId      String
+  status        ExecutionStatus @default(RUNNING)
+  currentNodeId String?
+  scheduledAt   DateTime?
+  completedAt   DateTime?
+  pgBossJobId   String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  workflow Workflow     @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  contact  Contact      @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  client   Client       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  logs     ExecutionLog[]
+
+  @@map("workflow_executions")
+}
+
+model ExecutionLog {
+  id          String   @id @default(cuid())
+  executionId String
+  nodeId      String?
+  nodeType    String?
+  status      String
+  message     String?
+  data        Json?
+  createdAt   DateTime @default(now())
+
+  execution WorkflowExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+
+  @@map("execution_logs")
+}

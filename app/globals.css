@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 5%;
+    --foreground: 240 10% 95%;
+
+    --card: 240 10% 8%;
+    --card-foreground: 240 10% 95%;
+
+    --popover: 240 10% 8%;
+    --popover-foreground: 240 10% 95%;
+
+    --primary: 239 84% 67%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 240 10% 12%;
+    --secondary-foreground: 240 10% 90%;
+
+    --muted: 240 10% 12%;
+    --muted-foreground: 240 5% 55%;
+
+    --accent: 270 75% 60%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 10% 15%;
+    --input: 240 10% 12%;
+    --ring: 239 84% 67%;
+
+    --radius: 0.75rem;
+
+    --sidebar-background: 240 10% 6%;
+    --sidebar-foreground: 240 10% 85%;
+    --sidebar-primary: 239 84% 67%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 10% 12%;
+    --sidebar-accent-foreground: 240 10% 90%;
+    --sidebar-border: 240 10% 12%;
+    --sidebar-ring: 239 84% 67%;
+
+    --chart-1: 239 84% 67%;
+    --chart-2: 270 75% 60%;
+    --chart-3: 199 89% 48%;
+    --chart-4: 152 76% 50%;
+    --chart-5: 30 100% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+/* Glassmorphism card */
+.glass-card {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, #6366F1, #8B5CF6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* React Flow dark theme */
+.react-flow__background {
+  background-color: #0a0a0f;
+}
+
+.react-flow__edge-path {
+  stroke: #6366F1;
+  stroke-width: 2;
+}
+
+.react-flow__handle {
+  background: #6366F1;
+  border: 2px solid #1a1a2e;
+  width: 10px;
+  height: 10px;
+}
+
+.react-flow__minimap {
+  background: #0f0f14;
+  border: 1px solid #1f1f2e;
+}
+
+.react-flow__controls {
+  background: #0f0f14;
+  border: 1px solid #1f1f2e;
+}
+
+.react-flow__controls button {
+  background: #1a1a2e;
+  border: 1px solid #2a2a3e;
+  color: #e2e8f0;
+}
+
+.react-flow__controls button:hover {
+  background: #2a2a3e;
+}
