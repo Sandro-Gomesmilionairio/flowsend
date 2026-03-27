@@ -48,14 +48,26 @@ export async function POST(
     },
   });
 
-  // Start workflows asynchronously (don't await)
-  for (const workflow of workflows) {
-    startWorkflowForContact(workflow.id, params.id, session.user.id).catch(
-      console.error
-    );
-  }
+  // Start workflows — await all, skip if active execution already exists for this contact+workflow
+  let workflowsTriggered = 0;
+  await Promise.allSettled(
+    workflows.map(async (workflow) => {
+      // Prevent duplicate executions for the same contact+workflow
+      const existing = await prisma.workflowExecution.findFirst({
+        where: {
+          workflowId: workflow.id,
+          contactId: params.id,
+          status: { in: ["RUNNING", "WAITING"] },
+        },
+      });
+      if (existing) return;
 
-  return NextResponse.json({ success: true, workflowsTriggered: workflows.length });
+      await startWorkflowForContact(workflow.id, params.id, session.user.id);
+      workflowsTriggered++;
+    })
+  );
+
+  return NextResponse.json({ success: true, workflowsTriggered });
 }
 
 export async function DELETE(
@@ -74,6 +86,23 @@ export async function DELETE(
       contact: { clientId: session.user.id },
     },
   });
+
+  // Cancel active executions for workflows triggered by this tag
+  const workflows = await prisma.workflow.findMany({
+    where: { clientId: session.user.id, triggerTagId: tagId },
+    select: { id: true },
+  });
+
+  if (workflows.length > 0) {
+    await prisma.workflowExecution.updateMany({
+      where: {
+        contactId: params.id,
+        workflowId: { in: workflows.map((w) => w.id) },
+        status: { in: ["RUNNING", "WAITING"] },
+      },
+      data: { status: "CANCELLED" },
+    });
+  }
 
   return NextResponse.json({ success: true });
 }

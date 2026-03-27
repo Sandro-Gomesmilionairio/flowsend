@@ -1,7 +1,6 @@
 /**
- * pg-boss based worker for processing scheduled workflow executions.
+ * Worker for processing scheduled workflow executions.
  * Run this as a separate process: npm run worker
- * Or include in Next.js custom server.
  */
 
 import { PrismaClient } from "@prisma/client";
@@ -10,41 +9,69 @@ import { processNextNode } from "../lib/workflow-engine";
 const prisma = new PrismaClient();
 
 const POLL_INTERVAL_MS = 10_000; // Check every 10 seconds
+const STUCK_RUNNING_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+
+async function recoverStuckExecutions() {
+  const stuckBefore = new Date(Date.now() - STUCK_RUNNING_THRESHOLD_MS);
+
+  const stuck = await prisma.workflowExecution.updateMany({
+    where: {
+      status: "RUNNING",
+      updatedAt: { lte: stuckBefore },
+    },
+    data: { status: "FAILED" },
+  });
+
+  if (stuck.count > 0) {
+    console.log(`[Worker] Recovered ${stuck.count} stuck RUNNING execution(s) → FAILED`);
+  }
+}
 
 async function processReadyExecutions() {
   const now = new Date();
 
   // Find WAITING executions whose scheduledAt has passed
-  const readyExecutions = await prisma.workflowExecution.findMany({
+  const candidates = await prisma.workflowExecution.findMany({
     where: {
       status: "WAITING",
-      scheduledAt: {
-        lte: now,
-      },
+      scheduledAt: { lte: now },
     },
-    take: 10, // Process in batches
+    take: 10,
+    orderBy: { scheduledAt: "asc" },
+    select: { id: true },
   });
 
-  if (readyExecutions.length > 0) {
-    console.log(`[Worker] Processing ${readyExecutions.length} ready executions`);
-  }
+  if (candidates.length === 0) return;
 
-  for (const execution of readyExecutions) {
+  console.log(`[Worker] Found ${candidates.length} candidate(s), attempting to claim...`);
+
+  for (const { id } of candidates) {
     try {
-      // Move to RUNNING
-      await prisma.workflowExecution.update({
-        where: { id: execution.id },
+      // Atomic claim: only succeeds if status is still WAITING
+      const claimed = await prisma.workflowExecution.updateMany({
+        where: { id, status: "WAITING" },
         data: { status: "RUNNING" },
       });
 
-      // Get the workflow to find the next node
+      if (claimed.count === 0) {
+        // Another worker already claimed this execution
+        continue;
+      }
+
+      // Fetch full data now that we own it
+      const execution = await prisma.workflowExecution.findUnique({
+        where: { id },
+      });
+
+      if (!execution) continue;
+
       const workflow = await prisma.workflow.findUnique({
         where: { id: execution.workflowId },
       });
 
       if (!workflow) {
         await prisma.workflowExecution.update({
-          where: { id: execution.id },
+          where: { id },
           data: { status: "FAILED" },
         });
         continue;
@@ -55,32 +82,36 @@ async function processReadyExecutions() {
 
       if (!currentNode) {
         await prisma.workflowExecution.update({
-          where: { id: execution.id },
+          where: { id },
           data: { status: "FAILED" },
         });
         continue;
       }
 
-      // Process the next node after the wait node
-      await processNextNode(execution.id, currentNode.nextId, nodes);
-
-      console.log(`[Worker] Processed execution ${execution.id}`);
+      // If current node is a wait node, advance to the next node.
+      // If current node is anything else (e.g. message rescheduled for business hours), re-process it.
+      const nextNodeId = currentNode.type === "wait" ? currentNode.nextId : currentNode.id;
+      await processNextNode(id, nextNodeId, nodes);
+      console.log(`[Worker] Processed execution ${id}`);
     } catch (error) {
-      console.error(`[Worker] Error processing execution ${execution.id}:`, error);
-      await prisma.workflowExecution.update({
-        where: { id: execution.id },
-        data: { status: "FAILED" },
-      }).catch(() => {});
+      console.error(`[Worker] Error processing execution ${id}:`, error);
+      await prisma.workflowExecution
+        .update({ where: { id }, data: { status: "FAILED" } })
+        .catch(() => {});
     }
   }
 }
 
 async function startWorker() {
-  console.log("[Worker] FlowSend worker started. Polling every", POLL_INTERVAL_MS / 1000, "seconds...");
+  console.log(
+    "[Worker] FlowSend worker started. Polling every",
+    POLL_INTERVAL_MS / 1000,
+    "seconds..."
+  );
 
-  // Poll at regular intervals (don't crash on error)
   const poll = async () => {
     try {
+      await recoverStuckExecutions();
       await processReadyExecutions();
     } catch (error) {
       console.error("[Worker] Poll error (will retry):", error);
@@ -89,7 +120,6 @@ async function startWorker() {
 
   // Initial poll with delay to allow DB to be ready
   setTimeout(poll, 5000);
-
   setInterval(poll, POLL_INTERVAL_MS);
 }
 
@@ -99,7 +129,6 @@ startWorker().catch((err) => {
   setInterval(() => {}, 60_000);
 });
 
-// Handle graceful shutdown
 process.on("SIGINT", async () => {
   console.log("[Worker] Shutting down...");
   await prisma.$disconnect();

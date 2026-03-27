@@ -3,6 +3,32 @@ import { calculateSendTime } from "@/lib/throttle";
 import { replaceVariables, durationToMs, resolveRelativeTime } from "@/lib/variables";
 import { createChatwootClient } from "@/lib/chatwoot";
 
+function parseTimeToMinutes(time: string): number {
+  const [hours, minutes] = time.split(":").map(Number);
+  return hours * 60 + minutes;
+}
+
+function nextBusinessWindowStart(windowStart: string, windowEnd: string): Date {
+  const startMins = parseTimeToMinutes(windowStart);
+  const endMins = parseTimeToMinutes(windowEnd);
+  const now = new Date();
+  const currentMins = now.getHours() * 60 + now.getMinutes();
+  const result = new Date(now);
+  result.setSeconds(0, 0);
+  result.setMilliseconds(0);
+  result.setHours(Math.floor(startMins / 60), startMins % 60, 0, 0);
+  // If before window start today, schedule for today's window start (already set above)
+  // If after window end, schedule for next day's window start
+  if (currentMins >= endMins) {
+    result.setDate(result.getDate() + 1);
+  }
+  // If already inside business hours this path shouldn't be called, but just in case return now
+  if (currentMins >= startMins && currentMins < endMins) {
+    return now;
+  }
+  return result;
+}
+
 export type WaitMode =
   | { mode: "duration"; duration: number; unit: "minutes" | "hours" | "days" }
   | { mode: "datetime"; datetime: string }
@@ -28,16 +54,29 @@ export async function startWorkflowForContact(
 
   const nodes = workflow.nodes as unknown as WorkflowNode[];
   const triggerNode = nodes.find((n) => n.type === "trigger");
-  if (!triggerNode) return;
 
-  // Create execution
+  if (!triggerNode) {
+    console.warn(
+      `[Engine] Workflow ${workflowId} has no trigger node — skipping execution for contact ${contactId}`
+    );
+    return;
+  }
+
+  if (!triggerNode.nextId) {
+    console.warn(
+      `[Engine] Workflow ${workflowId} trigger node has no connected next node — nothing to execute for contact ${contactId}`
+    );
+    return;
+  }
+
+  // Create execution starting at the first real node after trigger
   const execution = await prisma.workflowExecution.create({
     data: {
       workflowId,
       contactId,
       clientId,
       status: "RUNNING",
-      currentNodeId: triggerNode.nextId || triggerNode.id,
+      currentNodeId: triggerNode.nextId,
     },
   });
 
@@ -126,13 +165,11 @@ async function handleWaitNode(
   let scheduledAt: Date;
 
   if (config.mode === "duration") {
+    // Duration wait is literal — no business hours adjustment here.
+    // Business hours are enforced at the message node when actually sending.
     const ms = durationToMs(config.duration, config.unit);
-    const baseTime = new Date(Date.now() + ms);
-    scheduledAt = await calculateSendTime(baseTime, execution.clientId, {
-      maxMessagesPerMinute: execution.client.maxMessagesPerMinute,
-      sendWindowStart: execution.client.sendWindowStart,
-      sendWindowEnd: execution.client.sendWindowEnd,
-    });
+    const jitterMs = Math.random() * 5_000; // small jitter to avoid thundering herd
+    scheduledAt = new Date(Date.now() + ms + jitterMs);
   } else if (config.mode === "datetime") {
     scheduledAt = new Date(config.datetime);
   } else if (config.mode === "relative") {
@@ -180,6 +217,34 @@ async function handleMessageNode(
   node: WorkflowNode,
   allNodes: WorkflowNode[]
 ): Promise<void> {
+  // Enforce business hours: if outside send window, reschedule this node for next window start
+  const { sendWindowStart, sendWindowEnd } = execution.client;
+  if (sendWindowStart && sendWindowEnd) {
+    const startMins = parseTimeToMinutes(sendWindowStart);
+    const endMins = parseTimeToMinutes(sendWindowEnd);
+    const now = new Date();
+    const currentMins = now.getHours() * 60 + now.getMinutes();
+    const outsideHours = currentMins < startMins || currentMins >= endMins;
+
+    if (outsideHours) {
+      const scheduledAt = nextBusinessWindowStart(sendWindowStart, sendWindowEnd);
+      await prisma.workflowExecution.update({
+        where: { id: execution.id },
+        data: { status: "WAITING", scheduledAt, currentNodeId: node.id },
+      });
+      await prisma.executionLog.create({
+        data: {
+          executionId: execution.id,
+          nodeId: node.id,
+          nodeType: "message",
+          status: "scheduled",
+          message: `Outside business hours — rescheduled for ${scheduledAt.toISOString()}`,
+        },
+      });
+      return;
+    }
+  }
+
   const template = node.config.template as string;
 
   const message = replaceVariables(template, {

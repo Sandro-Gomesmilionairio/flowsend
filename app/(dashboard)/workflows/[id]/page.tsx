@@ -25,6 +25,21 @@ export default async function WorkflowBuilderPage({ params }: PageProps) {
 
   if (!workflow) notFound();
 
+  // Auto-fix: sync triggerTagId if nodes have a trigger tag but DB column is out of sync
+  const nodes = (workflow.nodes as any[]) || [];
+  const triggerNode = nodes.find((n: any) => n.type === "trigger");
+  const expectedTagId: string | null = triggerNode?.config?.tagId || null;
+  if (expectedTagId !== workflow.triggerTagId) {
+    await prisma.workflow.update({
+      where: { id: workflow.id },
+      data: { triggerTagId: expectedTagId },
+    });
+    workflow.triggerTagId = expectedTagId;
+    workflow.triggerTag = expectedTagId
+      ? (tags.find((t) => t.id === expectedTagId) as any) ?? null
+      : null;
+  }
+
   return (
     <div className="-m-6 lg:-m-8 h-[calc(100vh-0px)] flex flex-col">
       <div className="flex items-center justify-between px-6 py-4 border-b border-white/5 bg-[#0f0f14] flex-shrink-0">

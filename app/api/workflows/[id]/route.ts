@@ -30,11 +30,19 @@ export async function PATCH(
 
   const body = await req.json();
 
+  // Always derive triggerTagId from nodes when nodes are provided
+  // This prevents desync between nodes JSON and the triggerTagId column
+  let triggerTagId = body.triggerTagId;
+  if (body.nodes !== undefined) {
+    const triggerNode = (body.nodes as any[]).find((n: any) => n.type === "trigger");
+    triggerTagId = triggerNode?.config?.tagId || null;
+  }
+
   const result = await prisma.workflow.updateMany({
     where: { id: params.id, clientId: session.user.id },
     data: {
       ...(body.name !== undefined && { name: body.name }),
-      ...(body.triggerTagId !== undefined && { triggerTagId: body.triggerTagId }),
+      ...(triggerTagId !== undefined && { triggerTagId }),
       ...(body.nodes !== undefined && { nodes: body.nodes }),
       ...(body.isActive !== undefined && { isActive: body.isActive }),
     },

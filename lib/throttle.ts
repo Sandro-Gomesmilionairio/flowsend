@@ -41,8 +41,7 @@ export async function calculateSendTime(
 ): Promise<Date> {
   const minGapMs = (60 / config.maxMessagesPerMinute) * 1000; // ms between messages
 
-  // Count existing scheduled executions around baseTime (±1 day)
-  const windowStart = new Date(baseTime.getTime() - 24 * 60 * 60 * 1000);
+  // Count existing scheduled executions after baseTime (up to 7 days ahead)
   const windowEnd = new Date(baseTime.getTime() + 7 * 24 * 60 * 60 * 1000);
 
   const existingCount = await prisma.workflowExecution.count({
