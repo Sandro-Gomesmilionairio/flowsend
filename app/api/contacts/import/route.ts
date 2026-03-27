@@ -42,14 +42,14 @@ export async function POST(req: NextRequest) {
         update: {
           name: row.name.trim(),
           ...(row.email && { email: row.email.trim() }),
-          ...(row.customFields && { customFields: row.customFields }),
+          ...(row.customFields && { customFields: row.customFields as any }),
         },
         create: {
           clientId,
           name: row.name.trim(),
           phone: row.phone.trim(),
           email: row.email?.trim() || null,
-          customFields: row.customFields || {},
+          customFields: (row.customFields || {}) as any,
         },
       });
       created++;
