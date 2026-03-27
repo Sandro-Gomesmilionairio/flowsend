@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { calculateSendTime } from "@/lib/throttle";
 import { replaceVariables, durationToMs, resolveRelativeTime } from "@/lib/variables";
 import { createChatwootClient } from "@/lib/chatwoot";
+import { isCircuitOpen, recordSuccess, recordFailure, cooldownRemainingMs } from "@/lib/circuit-breaker";
 
 function parseTimeToMinutes(time: string): number {
   const [hours, minutes] = time.split(":").map(Number);
@@ -266,18 +267,41 @@ async function handleMessageNode(
     throw new Error("Chatwoot credentials not configured");
   }
 
-  const chatwoot = createChatwootClient(
-    chatwootAccountId,
-    chatwootApiToken,
-    chatwootInboxId
-  );
+  // Circuit breaker: if Chatwoot has been failing, reschedule instead of retrying
+  if (isCircuitOpen(chatwootAccountId)) {
+    const retryMs = cooldownRemainingMs(chatwootAccountId);
+    const scheduledAt = new Date(Date.now() + retryMs);
+    await prisma.workflowExecution.update({
+      where: { id: execution.id },
+      data: { status: "WAITING", scheduledAt, currentNodeId: node.id },
+    });
+    await prisma.executionLog.create({
+      data: {
+        executionId: execution.id,
+        nodeId: node.id,
+        nodeType: "message",
+        status: "scheduled",
+        message: `Chatwoot indisponível — reagendado para ${scheduledAt.toISOString()}`,
+      },
+    });
+    return;
+  }
 
-  const result = await chatwoot.sendWhatsAppMessage(
-    execution.contact.name,
-    execution.contact.phone,
-    message,
-    execution.contact.email || undefined
-  );
+  const chatwoot = createChatwootClient(chatwootAccountId, chatwootApiToken, chatwootInboxId);
+
+  let result: { contactId: string; conversationId: string };
+  try {
+    result = await chatwoot.sendWhatsAppMessage(
+      execution.contact.name,
+      execution.contact.phone,
+      message,
+      execution.contact.email || undefined
+    );
+    recordSuccess(chatwootAccountId);
+  } catch (sendError) {
+    recordFailure(chatwootAccountId);
+    throw sendError; // Re-throw so processNextNode marks execution as FAILED
+  }
 
   // Update contact with Chatwoot IDs
   await prisma.contact.update({
@@ -294,7 +318,7 @@ async function handleMessageNode(
       nodeId: node.id,
       nodeType: "message",
       status: "sent",
-      message: `Message sent to ${execution.contact.phone}`,
+      message: `Mensagem enviada para ${execution.contact.phone}`,
       data: { message, chatwootConversationId: result.conversationId },
     },
   });
