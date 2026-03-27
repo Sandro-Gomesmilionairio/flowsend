@@ -16,10 +16,13 @@ export default function WorkflowBuilderClient({
   tags,
 }: WorkflowBuilderClientProps) {
   const handleSave = async (nodes: any[]) => {
+    const triggerNode = nodes.find((n) => n.type === "trigger");
+    const triggerTagId = triggerNode?.config?.tagId || null;
+
     const res = await fetch(`/api/workflows/${workflowId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ nodes }),
+      body: JSON.stringify({ nodes, triggerTagId }),
     });
     if (!res.ok) throw new Error("Failed to save");
   };
