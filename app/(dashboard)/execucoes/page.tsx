@@ -4,6 +4,15 @@ import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { RefreshCw, X, ChevronDown, Clock, Send, Zap, CheckCircle, XCircle, AlertCircle } from "lucide-react";
 
+interface ExecutionLog {
+  id: string;
+  nodeId?: string;
+  nodeType?: string;
+  status: string;
+  message?: string;
+  createdAt: string;
+}
+
 interface Execution {
   id: string;
   status: string;
@@ -246,54 +255,113 @@ function WorkflowGroup({ name, executions, onCancel }: { name: string; execution
 function ExecutionRow({ exec, onCancel, compact = false }: { exec: Execution; onCancel: (id: string) => void; compact?: boolean }) {
   const cfg = STATUS_CONFIG[exec.status] || STATUS_CONFIG.CANCELLED;
   const StatusIcon = cfg.icon;
+  const [expanded, setExpanded] = useState(false);
+  const [logs, setLogs] = useState<ExecutionLog[]>([]);
+  const [loadingLogs, setLoadingLogs] = useState(false);
+
+  const toggleLogs = async () => {
+    if (expanded) {
+      setExpanded(false);
+      return;
+    }
+    setExpanded(true);
+    if (logs.length > 0) return;
+    setLoadingLogs(true);
+    try {
+      const res = await fetch(`/api/executions/${exec.id}`);
+      if (res.ok) {
+        const data = await res.json();
+        setLogs(data.logs || []);
+      }
+    } catch {}
+    setLoadingLogs(false);
+  };
+
+  const LOG_STATUS_STYLES: Record<string, string> = {
+    scheduled: "text-yellow-400 bg-yellow-500/10",
+    sent: "text-green-400 bg-green-500/10",
+    error: "text-red-400 bg-red-500/10",
+  };
 
   return (
-    <div className="px-5 py-3 flex items-center gap-4 hover:bg-white/2 transition-colors group">
-      {/* Avatar */}
-      <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center text-xs font-bold text-indigo-400 flex-shrink-0">
-        {getInitials(exec.contact.name)}
-      </div>
-
-      {/* Info */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <p className="text-sm font-medium text-white truncate">{exec.contact.name}</p>
-          <span className="text-slate-600 text-xs hidden md:block">{exec.contact.phone}</span>
+    <div>
+      <div
+        onClick={toggleLogs}
+        className="px-5 py-3 flex items-center gap-4 hover:bg-white/5 transition-colors group cursor-pointer"
+      >
+        {/* Avatar */}
+        <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center text-xs font-bold text-indigo-400 flex-shrink-0">
+          {getInitials(exec.contact.name)}
         </div>
-        <p className="text-xs text-slate-500 mt-0.5">{formatRelative(exec.createdAt)}</p>
-      </div>
 
-      {/* Status */}
-      <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border flex-shrink-0 ${cfg.bg} ${cfg.color}`}>
-        {cfg.pulse && <div className={`w-1.5 h-1.5 rounded-full ${cfg.color.replace("text-", "bg-")} animate-pulse`} />}
-        <StatusIcon className="w-3 h-3" />
-        {cfg.label}
-      </div>
-
-      {/* Scheduled time */}
-      {exec.scheduledAt && exec.status === "WAITING" && (
-        <div className="text-xs text-slate-500 flex-shrink-0 hidden lg:block">
-          {formatScheduledIn(exec.scheduledAt)}
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <p className="text-sm font-medium text-white truncate">{exec.contact.name}</p>
+            <span className="text-slate-600 text-xs hidden md:block">{exec.contact.phone}</span>
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5">{formatRelative(exec.createdAt)}</p>
         </div>
-      )}
-      {exec.completedAt && exec.status === "COMPLETED" && (
-        <div className="text-xs text-slate-500 flex-shrink-0 hidden lg:block">
-          {formatTime(exec.completedAt)}
-        </div>
-      )}
 
-      {/* Cancel button */}
-      <div className="flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-        {(exec.status === "WAITING" || exec.status === "RUNNING") && (
-          <button
-            onClick={() => onCancel(exec.id)}
-            className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors"
-            title="Cancelar"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+        {/* Status */}
+        <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border flex-shrink-0 ${cfg.bg} ${cfg.color}`}>
+          {cfg.pulse && <div className={`w-1.5 h-1.5 rounded-full ${cfg.color.replace("text-", "bg-")} animate-pulse`} />}
+          <StatusIcon className="w-3 h-3" />
+          {cfg.label}
+        </div>
+
+        {/* Scheduled time */}
+        {exec.scheduledAt && exec.status === "WAITING" && (
+          <div className="text-xs text-slate-500 flex-shrink-0 hidden lg:block">
+            {formatScheduledIn(exec.scheduledAt)}
+          </div>
         )}
+        {exec.completedAt && exec.status === "COMPLETED" && (
+          <div className="text-xs text-slate-500 flex-shrink-0 hidden lg:block">
+            {formatTime(exec.completedAt)}
+          </div>
+        )}
+
+        {/* Expand indicator + Cancel */}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <ChevronDown className={`w-3.5 h-3.5 text-slate-500 transition-transform ${expanded ? "rotate-180" : ""}`} />
+          {(exec.status === "WAITING" || exec.status === "RUNNING") && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onCancel(exec.id); }}
+              className="p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+              title="Cancelar"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Logs panel */}
+      {expanded && (
+        <div className="px-5 pb-3 ml-12">
+          {loadingLogs ? (
+            <p className="text-xs text-slate-500">Carregando logs...</p>
+          ) : logs.length === 0 ? (
+            <p className="text-xs text-slate-500">Nenhum log registrado.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {logs.map((log) => (
+                <div key={log.id} className="flex items-start gap-2 text-xs">
+                  <span className={`px-1.5 py-0.5 rounded font-medium ${LOG_STATUS_STYLES[log.status] || "text-slate-400 bg-white/5"}`}>
+                    {log.status}
+                  </span>
+                  {log.nodeType && (
+                    <span className="text-slate-600">[{log.nodeType}]</span>
+                  )}
+                  <span className="text-slate-300 flex-1">{log.message || "—"}</span>
+                  <span className="text-slate-600 flex-shrink-0">{formatTime(log.createdAt)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
