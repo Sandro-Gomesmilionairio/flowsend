@@ -307,7 +307,7 @@ export function WorkflowCanvas({
 
   const updateNodeConfig = useCallback(
     (nodeId: string, config: Record<string, unknown>) => {
-      setWfNodes((prev) => prev.map((n) => (n.id === nodeId ? { ...n, config } : n)));
+      setWfNodes((prev) => prev.map((n) => (n.id === nodeId ? { ...n, config: { ...n.config, ...config } } : n)));
 
       setNodes((nds) =>
         nds.map((fn) => {

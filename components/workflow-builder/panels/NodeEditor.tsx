@@ -78,7 +78,7 @@ export function NodeEditor({ node, tags, onUpdate, onClose, onDelete }: NodeEdit
             ].map((opt) => (
               <button
                 key={opt.value}
-                onClick={() => onUpdate(node.id, { mode: opt.value })}
+                onClick={() => onUpdate(node.id, { ...config, mode: opt.value })}
                 className={`py-1.5 text-xs rounded-lg transition-colors ${mode === opt.value ? "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}
               >
                 {opt.label}
